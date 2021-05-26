@@ -1,0 +1,208 @@
+
+# XGBoosting and AdaBoosting  
+
+### Problem Statement :- 
+
+  - Perform AdaBoost and Extreme Gradient Boosting for the Diabeties dataset
+
+### Data Understanding
+
+```{r}
+library(readr)
+db <- read_csv("/Users/thanush/Desktop/Digi 360/Module 20/Datasets-9/Diabetes_RF.csv")
+head(db)
+```
+
+```{r}
+# Renaming the columns
+colnames(db) <- c("np","plasma","dbp","tsf_thick", "serum", "BMI", "pedigree", "age", "class")
+head(db)
+```
+
+```{r}
+#converting features into factor
+db$class <- as.factor(db$class)
+str(db)
+```
+
+```{r}
+# Checking for missing values
+sapply(db, function(x) sum(is.na(x)))
+```
+
+```{r}
+# Taking only the same number of data points from majority class.
+library(caret)
+set.seed(1000)
+index <- createDataPartition(y = db$class, p = 0.7, list = FALSE)
+train <- db[index, ]
+test <- db[-index, ]
+```
+
+### Extreme Gradient Boosting
+
+To use xgboost package, keep these things in mind:
+  - Convert the categorical variables into numeric using one hot encoding
+  - For classification, if the dependent variable belongs to class factor, convert it to numeric
+
+```{r}
+#convert data frame to data table
+library(data.table)
+library(mlr)
+setDT(train) 
+setDT(test)
+```
+
+```{r}
+train_label <- train$class 
+test_label <- test$class
+```
+
+```{r}
+train_label
+```
+
+```{r}
+new_train <- model.matrix(~.+0,data = train[,-c("class"),with=F]) 
+new_test <- model.matrix(~.+0,data = test[,-c("class"),with=F])
+```
+
+```{r}
+train_label <- as.numeric(train_label)-1
+test_label <- as.numeric(test_label)-1
+```
+
+```{r}
+train_label
+```
+
+For xgboost, we'll use xgb.DMatrix to convert data table into a matrix 
+
+```{r}
+library(xgboost)
+library(dplyr) 
+#preparing matrix 
+dtrain <- xgb.DMatrix(data = new_train,label = train_label) 
+dtest <- xgb.DMatrix(data = new_test,label=test_label)
+```
+
+
+### Building Model with Default Parameters
+
+```{r}
+#default parameters
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=6, min_child_weight=1, subsample=1, colsample_bytree=1)
+```
+
+Using the inbuilt xgb.cv function, let's calculate the best nround for this model. 
+
+### Cross Validation
+
+```{r}
+set.seed(1000)
+xgbcv <- xgb.cv( params = params, data = dtrain, nrounds = 100, nfold = 5, showsd = T, stratified = T, print_every_n = 10, early_stopping_rounds = 20, maximize = F)
+
+```
+
+
+The model returned lowest error at the 2nd (nround) iteration. Also, if you noticed the running messages in your console, you would have understood that train and test error are following each other. 
+
+### Training the Model
+
+```{r}
+#first default - model training
+xgb1 <- xgb.train (params = params, data = dtrain, nrounds = 2, watchlist = list(val=dtest,train=dtrain), print_every_n = 10, early_stoppin_rounds = 10, maximize = F , eval_metric = "error")
+```
+
+
+### Model Evolution
+
+```{r}
+#model prediction
+xgbpred <- predict (xgb1,dtest)
+xgbpred <- ifelse (xgbpred > 0.5,1,0)
+```
+
+The objective function binary:logistic returns output probabilities rather than labels. To convert it, we need to manually use a cutoff value. As seen above, I've used 0.5 as my cutoff value for predictions. We can calculate our model's accuracy using confusionMatrix() function from caret package.
+
+```{r}
+#confusion matrix
+library(caret)
+confusionMatrix(as.factor(xgbpred), as.factor(test_label))
+```
+
+
+The accuracy of the model is 71%.
+
+### Feature Importance
+
+```{r}
+#view variable importance plot
+mat <- xgb.importance (feature_names = colnames(new_train),model = xgb1)
+xgb.plot.importance (importance_matrix = mat[1:20]) 
+```
+
+The important features are `plasma`, `BMI`,`number of times pregnent`, `pedigree` and `bdp`.
+
+### AdaBoosting Model
+
+```{r}
+# Let's build the model on train data
+library(parallel)
+library(parallelMap) 
+library(mlr)
+library(dplyr) 
+library(caret) 
+library(adabag)
+library(rpart)
+model = boosting(class~., data=train, boos=TRUE, mfinal=10, coeflearn = 'Zhu',control=rpart.control(maxdepth=3))
+```
+
+```{r}
+print(names(model))
+```
+
+```{r}
+print(model$trees[1])
+```
+
+### Model Evolution
+
+```{r}
+pred = predict(model, test)
+```
+
+```{r}
+print(pred$confusion)
+```
+
+```{r}
+accuracy = (120 + 49)/(120 + 49 + 31 + 30)
+accuracy
+```
+
+### Cross Validation Model
+
+```{r}
+set.seed(1000)
+cvmodel = boosting.cv(class~., data=train, boos=TRUE, mfinal=10, v=5)
+parallelStop()
+```
+
+
+```{r}
+cvmodel
+```
+
+
+```{r}
+accuracy = (288 + 112)/(288 + 112 + 76 + 62)
+accuracy
+```
+
+### Conclusion:- 
+
+  - With Adaboosting the accuracy is 73%.
+  - With Adaboosting cross validation the accuracy is 74%
+  - With XGBoosting the accuracy is 71%.
+  - The most important features are `plasma`, `BMI`,`number of times pregnent`, `pedigree` and `bdp`.
